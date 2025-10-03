@@ -125,6 +125,11 @@ def perform_labeling(df_db_klik, df_database):
     """
     Melakukan pelabelan SKU dan KATEGORI pada data DB KLIK berdasarkan DATABASE.
     """
+    # [PERBAIKAN] Ubah kolom NAMA dan SKU menjadi string secara eksplisit untuk menghindari TypeError
+    df_database['NAMA'] = df_database['NAMA'].astype(str)
+    df_database['SKU'] = df_database['SKU'].astype(str)
+    df_db_klik['NAMA'] = df_db_klik['NAMA'].astype(str)
+    
     # Membersihkan dan mempersiapkan teks
     df_database['text_for_tfidf'] = df_database['NAMA'].fillna('') + ' ' + df_database['SKU'].fillna('')
     df_db_klik['text_for_tfidf'] = df_db_klik['NAMA'].fillna('')
@@ -164,18 +169,19 @@ def update_spreadsheet_with_labels(client, labeled_df):
         target_columns = ['TANGGAL', 'NAMA', 'HARGA', 'TERJUAL/BLN', 'STOK', 'BRAND', 'KATEGORI', 'SKU']
         
         # Pastikan kolom tanggal berformat string agar tidak error saat ditulis
-        df_ready['TANGGAL'] = df_ready['TANGGAL'].dt.strftime('%Y-%m-%d')
-        df_habis['TANGGAL'] = df_habis['TANGGAL'].dt.strftime('%Y-%m-%d')
+        # Juga, handle NaT (Not a Time) jika ada tanggal yang kosong
+        df_ready['TANGGAL'] = pd.to_datetime(df_ready['TANGGAL']).dt.strftime('%Y-%m-%d')
+        df_habis['TANGGAL'] = pd.to_datetime(df_habis['TANGGAL']).dt.strftime('%Y-%m-%d')
 
         # Menulis ke worksheet READY
         ws_ready = spreadsheet.worksheet("DB KLIK - REKAP - READY")
         ws_ready.clear() # Hapus data lama
-        set_with_dataframe(ws_ready, df_ready[target_columns], include_index=False, resize=True)
+        set_with_dataframe(ws_ready, df_ready[target_columns].fillna(''), include_index=False, resize=True)
         
         # Menulis ke worksheet HABIS
         ws_habis = spreadsheet.worksheet("DB KLIK - REKAP - HABIS")
         ws_habis.clear() # Hapus data lama
-        set_with_dataframe(ws_habis, df_habis[target_columns], include_index=False, resize=True)
+        set_with_dataframe(ws_habis, df_habis[target_columns].fillna(''), include_index=False, resize=True)
 
         return True
     except Exception as e:
@@ -204,7 +210,7 @@ def find_product_matches_tfidf(selected_product_name, df_db_klik, df_kompetitor)
     combined_df = pd.concat([selected_product, competitor_filtered_by_brand], ignore_index=True)
     
     # 4. Proses TF-IDF
-    combined_df['NAMA_CLEAN'] = combined_df['NAMA'].fillna('').str.lower()
+    combined_df['NAMA_CLEAN'] = combined_df['NAMA'].fillna('').astype(str).str.lower()
     vectorizer = TfidfVectorizer(ngram_range=(1, 2))
     tfidf_matrix = vectorizer.fit_transform(combined_df['NAMA_CLEAN'])
     
@@ -238,6 +244,9 @@ def to_excel(df_dict):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         for sheet_name, df in df_dict.items():
+            # Konversi kolom tanggal ke string agar tidak ada info timezone di excel
+            for col in df.select_dtypes(include=['datetime64[ns]', 'datetime64[ns, UTC]']).columns:
+                df[col] = df[col].dt.strftime('%Y-%m-%d')
             df.to_excel(writer, index=False, sheet_name=sheet_name)
     processed_data = output.getvalue()
     return processed_data
@@ -267,7 +276,7 @@ if not st.session_state.data_loaded:
         client = connect_to_gsheets()
         if client:
             df_kompetitor, df_db_klik, df_database = load_and_process_data(client)
-            if df_kompetitor is not None:
+            if df_kompetitor is not None and df_db_klik is not None and df_database is not None:
                 st.session_state.df_kompetitor = df_kompetitor
                 st.session_state.df_db_klik = df_db_klik
                 st.session_state.df_database = df_database
@@ -277,35 +286,39 @@ if not st.session_state.data_loaded:
             st.stop() # Hentikan eksekusi jika koneksi gagal
 
 # --- PENGECEKAN KEBUTUHAN PELABELAN ---
-# Cek apakah kolom SKU atau KATEGORI kosong di data DB KLIK
-needs_labeling = st.session_state.df_db_klik['SKU'].isnull().any() or \
-                 st.session_state.df_db_klik['KATEGORI'].isnull().any() or \
-                 (st.session_state.df_db_klik['SKU'] == '').any() or \
-                 (st.session_state.df_db_klik['KATEGORI'] == '').any()
+if st.session_state.data_loaded:
+    # Cek apakah kolom SKU atau KATEGORI kosong di data DB KLIK
+    needs_labeling = st.session_state.df_db_klik['SKU'].isnull().any() or \
+                     st.session_state.df_db_klik['KATEGORI'].isnull().any() or \
+                     (st.session_state.df_db_klik['SKU'] == '').any() or \
+                     (st.session_state.df_db_klik['KATEGORI'] == '').any()
 
-# Tampilkan Peringatan dan Tombol Pelabelan jika dibutuhkan
-if needs_labeling:
-    st.warning("⚠️ **PERHATIAN:** Terdeteksi pelabelan SKU dan KATEGORI tidak sinkron atau data tidak ditemukan. Silakan jalankan proses pelabelan.")
-    if st.button("JALANKAN PELABELAN SKU DAN KATEGORI"):
-        with st.spinner("Melakukan pelabelan cerdas dengan TF-IDF... Ini mungkin memakan waktu beberapa saat."):
-            # Panggil fungsi pelabelan
-            df_db_klik_labeled = perform_labeling(st.session_state.df_db_klik, st.session_state.df_database)
-            
-            # Panggil fungsi untuk menulis kembali ke GSheet
-            client = connect_to_gsheets() # Buat koneksi lagi
-            success = update_spreadsheet_with_labels(client, df_db_klik_labeled)
-            
-            if success:
-                st.success("Pelabelan selesai dan data telah berhasil disimpan kembali ke Google Sheets!")
-                # Hapus cache agar data baru yang sudah dilabeli ditarik lagi
-                st.cache_data.clear()
-                st.info("Memuat ulang aplikasi dengan data terbaru...")
-                # Reset state dan rerun untuk memuat ulang data yang sudah dilabeli
-                st.session_state.data_loaded = False
-                st.rerun()
-            else:
-                st.error("Proses pelabelan gagal disimpan. Silakan periksa error di atas.")
-    st.stop() # Hentikan eksekusi sisa aplikasi sampai pelabelan selesai
+    # Tampilkan Peringatan dan Tombol Pelabelan jika dibutuhkan
+    if needs_labeling:
+        st.warning("⚠️ **PERHATIAN:** Terdeteksi pelabelan SKU dan KATEGORI tidak sinkron atau data tidak ditemukan. Silakan jalankan proses pelabelan.")
+        if st.button("JALANKAN PELABELAN SKU DAN KATEGORI"):
+            with st.spinner("Melakukan pelabelan cerdas dengan TF-IDF... Ini mungkin memakan waktu beberapa saat."):
+                # Panggil fungsi pelabelan
+                df_db_klik_labeled = perform_labeling(st.session_state.df_db_klik.copy(), st.session_state.df_database.copy())
+                
+                # Panggil fungsi untuk menulis kembali ke GSheet
+                client = connect_to_gsheets() # Buat koneksi lagi
+                success = update_spreadsheet_with_labels(client, df_db_klik_labeled)
+                
+                if success:
+                    st.success("Pelabelan selesai dan data telah berhasil disimpan kembali ke Google Sheets!")
+                    # Hapus cache agar data baru yang sudah dilabeli ditarik lagi
+                    st.cache_data.clear()
+                    st.info("Memuat ulang aplikasi dengan data terbaru...")
+                    # Reset state dan rerun untuk memuat ulang data yang sudah dilabeli
+                    st.session_state.data_loaded = False
+                    st.rerun()
+                else:
+                    st.error("Proses pelabelan gagal disimpan. Silakan periksa error di atas.")
+        st.stop() # Hentikan eksekusi sisa aplikasi sampai pelabelan selesai
+else:
+    st.error("Gagal memuat data. Tidak dapat melanjutkan.")
+    st.stop()
 
 # Jika data tidak ada, hentikan aplikasi
 if st.session_state.df_db_klik.empty or st.session_state.df_kompetitor.empty:
@@ -373,7 +386,7 @@ with st.sidebar:
     st.write("Butuh pelabelan ulang?")
     if st.button("Jalankan Ulang Pelabelan"):
         with st.spinner("Memaksa pelabelan ulang..."):
-            df_db_klik_labeled = perform_labeling(st.session_state.df_db_klik, st.session_state.df_database)
+            df_db_klik_labeled = perform_labeling(st.session_state.df_db_klik.copy(), st.session_state.df_database.copy())
             client = connect_to_gsheets()
             success = update_spreadsheet_with_labels(client, df_db_klik_labeled)
             if success:
