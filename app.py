@@ -332,6 +332,44 @@ if main_menu == "Dashboard Analisis":
                             new_products_df['Harga'] = new_products_df['Harga'].apply(format_rupiah)
                             st.dataframe(new_products_df[['Nama Produk', 'Harga', 'Brand']], use_container_width=True, hide_index=True)
 
+elif app_mode == "HPP Produk":
+        st.header("💰 Analisis Harga Pokok Penjualan (HPP)")
+        if db_df.empty or 'SKU' not in db_df.columns:
+            st.error("Sheet 'DATABASE' tidak ditemukan atau tidak valid untuk analisis HPP."); st.stop()
+
+        latest_entries_overall = df.loc[df.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
+        main_store_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] == "DB KLIK"]
+
+        db_df['HPP'] = pd.to_numeric(db_df.get('HPP (LATEST)'), errors='coerce').fillna(pd.to_numeric(db_df.get('HPP (AVERAGE)'), errors='coerce'))
+        hpp_data = db_df[['SKU', 'HPP']].dropna(subset=['SKU', 'HPP'])
+        hpp_data = hpp_data[hpp_data['SKU'].astype(str) != ''].drop_duplicates(subset=['SKU'])
+        
+        merged_df = pd.merge(main_store_latest_overall, hpp_data, on='SKU', how='left')
+        merged_df['Selisih'] = merged_df['Harga'] - merged_df['HPP']
+
+        df_rugi = merged_df[merged_df['Selisih'] < 0].copy()
+        df_untung = merged_df[(merged_df['Selisih'] >= 0)].copy()
+        df_tidak_ditemukan = merged_df[merged_df['HPP'].isnull()].copy()
+        
+        st.subheader("🔴 Produk Dijual di Bawah HPP")
+        if not df_rugi.empty:
+             st.dataframe(df_rugi[['Nama Produk', 'SKU', 'Harga', 'HPP', 'Selisih']].style.format({"Harga": format_rupiah, "HPP": format_rupiah, "Selisih": format_rupiah}), use_container_width=True)
+        else:
+             st.success("👍 Tidak ada produk yang dijual di bawah HPP.")
+        
+        st.subheader("🟢 Produk Dijual di Atas HPP")
+        if not df_untung.empty:
+            st.dataframe(df_untung[['Nama Produk', 'SKU', 'Harga', 'HPP', 'Selisih']].style.format({"Harga": format_rupiah, "HPP": format_rupiah, "Selisih": format_rupiah}), use_container_width=True)
+        else:
+            st.warning("Tidak ada produk yang dijual di atas HPP.")
+
+        st.subheader("❓ Produk Tanpa Data HPP")
+        if not df_tidak_ditemukan.empty:
+            st.dataframe(df_tidak_ditemukan[['Nama Produk', 'SKU', 'Harga']].style.format({"Harga": format_rupiah}), use_container_width=True)
+        else:
+            st.success("Semua produk berhasil dicocokkan dengan data HPP.")
+
+
 elif main_menu == "Similarity Produk":
     st.header("⚖️ Alat Analisis Similarity Produk")
     st.info("Alat ini menggunakan TF-IDF dan Validasi Brand untuk menemukan produk serupa.")
@@ -343,21 +381,16 @@ elif main_menu == "Similarity Produk":
     my_store_df = df[df['Toko'] == "DB KLIK"].copy()
     my_store_df.sort_values('Tanggal', ascending=True, inplace=True)
     my_store_df.drop_duplicates(subset='Nama Produk', keep='last', inplace=True)
-    my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True) # Tetap filter untuk produk yang valid
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
     
     brand_list = ["Semua Brand"] + sorted(my_store_df['Brand'].unique().tolist())
     selected_brand_filter = st.selectbox("Filter berdasarkan Brand:", brand_list)
 
-    if selected_brand_filter != "Semua Brand":
-        product_list_df = my_store_df[my_store_df['Brand'] == selected_brand_filter]
-    else:
-        product_list_df = my_store_df
-        
+    product_list_df = my_store_df[my_store_df['Brand'] == selected_brand_filter] if selected_brand_filter != "Semua Brand" else my_store_df
     product_list = sorted(product_list_df['Nama Produk'].unique().tolist())
 
-    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang cocok dengan filter brand."); st.stop()
+    if not product_list: st.warning("Tidak ada produk yang cocok dengan filter brand."); st.stop()
     
     st.caption("Anda bisa mengetik di dalam kotak di bawah untuk mencari produk.")
     selected_name = st.selectbox("Pilih Produk Anda (DB KLIK):", product_list, label_visibility="collapsed")
@@ -365,6 +398,10 @@ elif main_menu == "Similarity Produk":
     if st.button("🔍 Analisis Produk", type="primary"):
         if selected_name:
             selected_product_row = my_store_df[my_store_df['Nama Produk'] == selected_name].iloc[0]
+            
+            if pd.isna(selected_product_row['SKU']) or selected_product_row['SKU'] == '':
+                st.error("Produk yang dipilih tidak memiliki SKU. Mohon jalankan 'Tools Labeling' terlebih dahulu."); st.stop()
+
             with st.spinner("Menganalisis kemiripan produk..."):
                 matches = find_matches_for_similarity_tool(selected_product_row, my_store_df, competitor_df, score_cutoff=accuracy_cutoff/100)
             
@@ -390,5 +427,5 @@ elif main_menu == "Tools (Peralatan)":
     st.subheader("Labeling SKU dan Kategori Otomatis")
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
-        run_sku_category_labeling_optimized(gc, SPREADSHEET_KEY)
+        run_sku_category_labeling_guaranteed(gc, SPREADSHEET_KEY)
 
