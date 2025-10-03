@@ -84,20 +84,20 @@ def load_all_data(spreadsheet_key):
     rekap_df = pd.concat(rekap_list_df, ignore_index=True)
     
     rekap_df.columns = [str(c).strip().upper() for c in rekap_df.columns]
-    final_rename = {'NAMA': 'Nama Produk', 'TERJUAL/BLN': 'Terjual per Bulan', 'TANGGAL': 'Tanggal', 'HARGA': 'Harga', 'BRAND': 'Brand', 'STATUS': 'Status', 'KATEGORI': 'Kategori', 'SKU': 'SKU'}
+    final_rename = {'NAMA': 'Nama Produk', 'TERJUAL/BLN': 'Terjual per Bulan', 'TANGGAL': 'TANGGAL', 'HARGA': 'Harga', 'BRAND': 'BRAND', 'STATUS': 'Status', 'KATEGORI': 'Kategori', 'SKU': 'SKU'}
     rekap_df.rename(columns=final_rename, inplace=True)
     
-    rekap_df['Tanggal'] = pd.to_datetime(rekap_df['Tanggal'], errors='coerce', dayfirst=True)
+    rekap_df['TANGGAL'] = pd.to_datetime(rekap_df['TANGGAL'], errors='coerce', dayfirst=True)
     rekap_df['Harga'] = pd.to_numeric(rekap_df['Harga'].astype(str).str.replace(r'[^\d]', '', regex=True), errors='coerce')
     rekap_df['Terjual per Bulan'] = pd.to_numeric(rekap_df['Terjual per Bulan'], errors='coerce').fillna(0)
-    rekap_df.dropna(subset=['Tanggal', 'Nama Produk', 'Harga', 'Toko'], inplace=True)
+    rekap_df.dropna(subset=['TANGGAL', 'Nama Produk', 'Harga', 'Toko'], inplace=True)
     
-    if 'Brand' not in rekap_df.columns: rekap_df['Brand'] = rekap_df['Nama Produk'].str.split().str[0]
-    rekap_df['Brand'].fillna("LAINNYA", inplace=True)
+    if 'BRAND' not in rekap_df.columns: rekap_df['BRAND'] = rekap_df['Nama Produk'].str.split().str[0]
+    rekap_df['BRAND'].fillna("LAINNYA", inplace=True)
 
     rekap_df['Omzet'] = (rekap_df['Harga'].fillna(0) * rekap_df['Terjual per Bulan'].fillna(0)).astype(int)
     
-    return rekap_df.sort_values('Tanggal'), database_df
+    return rekap_df.sort_values('TANGGAL'), database_df
 
 def format_rupiah(val):
     if pd.isna(val): return "N/A"
@@ -108,9 +108,9 @@ def format_rupiah(val):
 # ================================
 def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competitor_df, score_cutoff=0.6):
     selected_product = my_store_df[my_store_df['SKU'] == selected_product_sku].iloc[0]
-    selected_brand = selected_product['Brand']
+    selected_BRAND = selected_product['BRAND']
     
-    competitor_filtered = competitor_df[competitor_df['Brand'] == selected_brand].copy()
+    competitor_filtered = competitor_df[competitor_df['BRAND'] == selected_BRAND].copy()
     if competitor_filtered.empty: 
         return [{'Nama Produk Tercantum': selected_product['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product['Harga'], 'Status Stok': 'Tersedia', 'Skor Kemiripan (%)': 100}]
 
@@ -249,20 +249,20 @@ main_menu = st.sidebar.radio("Pilih Alat:", ("Dashboard Analisis", "Similarity P
 if main_menu == "Dashboard Analisis":
     st.header("📈 Dashboard Analisis Penjualan & Kompetitor")
     st.sidebar.header("Filter Dashboard")
-    min_date_val, max_date_val = df['Tanggal'].min().date(), df['Tanggal'].max().date()
-    start_date, end_date = st.sidebar.date_input("Rentang Tanggal:", [min_date_val, max_date_val], min_value=min_date_val, max_value=max_date_val)
-    if len((start_date, end_date)) != 2: st.sidebar.warning("Pilih 2 tanggal."); st.stop()
+    min_date_val, max_date_val = df['TANGGAL'].min().date(), df['TANGGAL'].max().date()
+    start_date, end_date = st.sidebar.date_input("Rentang TANGGAL:", [min_date_val, max_date_val], min_value=min_date_val, max_value=max_date_val)
+    if len((start_date, end_date)) != 2: st.sidebar.warning("Pilih 2 TANGGAL."); st.stop()
     
     start_date_dt, end_date_dt = pd.to_datetime(start_date), pd.to_datetime(end_date)
-    df_filtered = df[(df['Tanggal'] >= start_date_dt) & (df['Tanggal'] <= end_date_dt)].copy()
-    if df_filtered.empty: st.error("Tidak ada data di rentang tanggal yang dipilih."); st.stop()
+    df_filtered = df[(df['TANGGAL'] >= start_date_dt) & (df['TANGGAL'] <= end_date_dt)].copy()
+    if df_filtered.empty: st.error("Tidak ada data di rentang TANGGAL yang dipilih."); st.stop()
 
-    df_filtered['Minggu'] = df_filtered['Tanggal'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
-    latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
+    df_filtered['Minggu'] = df_filtered['TANGGAL'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
+    latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['TANGGAL'].idxmax()]
     main_store_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] == "DB KLIK"]
     competitor_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] != "DB KLIK"]
 
-    tab1, tab3, tab4, tab5, tab6 = st.tabs(["⭐ Toko Saya", "🏆 Brand Kompetitor", "📦 Status Stok", "📈 Kinerja Penjualan", "📊 Produk Baru"])
+    tab1, tab3, tab4, tab5, tab6 = st.tabs(["⭐ Toko Saya", "🏆 BRAND Kompetitor", "📦 Status Stok", "📈 Kinerja Penjualan", "📊 Produk Baru"])
     
     with tab1:
         st.subheader(f"Analisis Kinerja Toko: DB KLIK")
@@ -272,22 +272,22 @@ if main_menu == "Dashboard Analisis":
             if col in top_products.columns: top_products[col] = top_products[col].apply(format_rupiah)
         st.dataframe(top_products[['Nama Produk', 'SKU', 'Harga', 'Terjual per Bulan', 'Omzet']], use_container_width=True, hide_index=True)
         
-        st.markdown("#### Distribusi Omzet per Brand")
-        brand_omzet_main = main_store_latest_overall.groupby('Brand')['Omzet'].sum().reset_index()
-        if not brand_omzet_main.empty:
-            fig_brand_pie = px.pie(brand_omzet_main.sort_values('Omzet', ascending=False).head(10), 
-                                 names='Brand', values='Omzet', title='Distribusi Omzet Top 10 Brand')
-            st.plotly_chart(fig_brand_pie, use_container_width=True)
+        st.markdown("#### Distribusi Omzet per BRAND")
+        BRAND_omzet_main = main_store_latest_overall.groupby('BRAND')['Omzet'].sum().reset_index()
+        if not BRAND_omzet_main.empty:
+            fig_BRAND_pie = px.pie(BRAND_omzet_main.sort_values('Omzet', ascending=False).head(10), 
+                                 names='BRAND', values='Omzet', title='Distribusi Omzet Top 10 BRAND')
+            st.plotly_chart(fig_BRAND_pie, use_container_width=True)
     
     with tab3:
-        st.subheader("Analisis Brand di Toko Kompetitor")
-        st.info("Snapshot omzet brand teratas di setiap toko kompetitor.")
+        st.subheader("Analisis BRAND di Toko Kompetitor")
+        st.info("Snapshot omzet BRAND teratas di setiap toko kompetitor.")
         for store in sorted(competitor_latest_overall['Toko'].unique()):
             with st.expander(f"Analisis untuk: **{store}**"):
                 store_df = competitor_latest_overall[competitor_latest_overall['Toko'] == store]
-                brand_omzet = store_df.groupby('Brand')['Omzet'].sum().nlargest(10).reset_index()
-                if not brand_omzet.empty:
-                    fig = px.bar(brand_omzet, x='Brand', y='Omzet', title=f"Top 10 Brand di {store}", text_auto='.2s')
+                BRAND_omzet = store_df.groupby('BRAND')['Omzet'].sum().nlargest(10).reset_index()
+                if not BRAND_omzet.empty:
+                    fig = px.bar(BRAND_omzet, x='BRAND', y='Omzet', title=f"Top 10 BRAND di {store}", text_auto='.2s')
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.write("Tidak ada data omzet untuk toko ini.")
@@ -329,19 +329,19 @@ if main_menu == "Dashboard Analisis":
                             st.write(f"Ditemukan **{len(new_products)}** produk baru:")
                             new_products_df = latest_entries_overall[(latest_entries_overall['Nama Produk'].isin(new_products)) & (latest_entries_overall['Toko'] == store)].copy()
                             new_products_df['Harga'] = new_products_df['Harga'].apply(format_rupiah)
-                            st.dataframe(new_products_df[['Nama Produk', 'Harga', 'Brand']], use_container_width=True, hide_index=True)
+                            st.dataframe(new_products_df[['Nama Produk', 'Harga', 'BRAND']], use_container_width=True, hide_index=True)
 
 
 
 elif main_menu == "Similarity Produk":
     st.header("⚖️ Alat Analisis Similarity Produk")
-    st.info("Alat ini menggunakan TF-IDF dan Validasi Brand untuk menemukan produk serupa.")
+    st.info("Alat ini menggunakan TF-IDF dan Validasi BRAND untuk menemukan produk serupa.")
     st.sidebar.header("Filter Similarity")
     accuracy_cutoff = st.sidebar.slider("Tingkat Akurasi Minimum (%)", 50, 100, 65, 1)
 
     df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
     my_store_df = df[(df['Toko'] == "DB KLIK") & (df['Status'] == 'Tersedia')].copy()
-    my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
+    my_store_df.dropna(subset=['SKU', 'BRAND'], inplace=True)
     my_store_df.drop_duplicates(subset='SKU', inplace=True)
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
