@@ -1,8 +1,8 @@
 # ===================================================================================
-#  DASHBOARD ANALISIS & TOOLS - VERSI 7.5 (FINAL FIX)
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.3 (FINAL INTEGRATION)
 #  Dibuat oleh: Firman & Asisten AI Gemini
-#  Versi ini memperbaiki bug APIError, logika dropdown Similarity, dan
-#  memastikan semua fungsionalitas berjalan dengan stabil.
+#  Versi ini memperbaiki NameError dan melengkapi semua fungsionalitas tab
+#  dalam struktur menu yang terintegrasi.
 # ===================================================================================
 
 import streamlit as st
@@ -109,12 +109,12 @@ def format_rupiah(val):
 # ================================
 # FUNGSI UNTUK ALAT SIMILARITY PRODUK
 # ================================
-def find_matches_for_similarity_tool(selected_product, my_store_df, competitor_df, score_cutoff=0.6):
-    selected_brand = selected_product['Brand']
+def find_matches_for_similarity_tool(selected_product_row, my_store_df, competitor_df, score_cutoff=0.6):
+    selected_brand = selected_product_row['Brand']
     
     competitor_filtered = competitor_df[competitor_df['Brand'] == selected_brand].copy()
     
-    results = [{'Nama Produk Tercantum': selected_product['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product['Harga'], 'Status Stok': selected_product['Status'], 'Skor Kemiripan (%)': 100}]
+    results = [{'Nama Produk Tercantum': selected_product_row['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product_row['Harga'], 'Status Stok': selected_product_row['Status'], 'Skor Kemiripan (%)': 100}]
     if competitor_filtered.empty: 
         return results
 
@@ -122,7 +122,7 @@ def find_matches_for_similarity_tool(selected_product, my_store_df, competitor_d
     vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(3, 6))
     vectorizer.fit(all_names)
 
-    vec_selected = vectorizer.transform([selected_product['Nama Normalisasi']])
+    vec_selected = vectorizer.transform([selected_product_row['Nama Normalisasi']])
     vec_competitor = vectorizer.transform(competitor_filtered['Nama Normalisasi'])
     similarities = cosine_similarity(vec_selected, vec_competitor)[0]
 
@@ -160,7 +160,6 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
     
     updates_ready, updates_habis = [], []
     
-    # --- PERBAIKAN: Menggabungkan tanpa mereset index asli ---
     db_klik_ready_df['sheet'] = 'ready'
     db_klik_habis_df['sheet'] = 'habis'
     combined_db_klik_df = pd.concat([db_klik_ready_df, db_klik_habis_df])
@@ -197,7 +196,7 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
             original_row = klik_brand_df.iloc[j]
             best_match_db = db_brand_df.iloc[match_idx]
             
-            row_index_in_sheet = original_row.name + 2 # .name adalah index asli (mulai dari 0), +2 untuk baris sheet
+            row_index_in_sheet = original_row.name + 2
             
             if original_row['sheet'] == 'ready':
                 updates_ready.append({'range': f'R{row_index_in_sheet}C{sku_col_ready}', 'values': [[best_match_db['SKU']]]})
@@ -259,6 +258,7 @@ if main_menu == "Dashboard Analisis":
     df_filtered = df[(df['Tanggal'] >= start_date_dt) & (df['Tanggal'] <= end_date_dt)].copy()
     if df_filtered.empty: st.error("Tidak ada data di rentang tanggal yang dipilih."); st.stop()
 
+    # --- PERBAIKAN: Mendefinisikan variabel yang dibutuhkan oleh semua tab ---
     my_store_name = "DB KLIK"
     df_filtered['Minggu'] = df_filtered['Tanggal'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
     latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
@@ -272,7 +272,7 @@ if main_menu == "Dashboard Analisis":
         st.subheader(f"Analisis Kinerja Toko: {my_store_name}")
         st.markdown("#### Produk Terlaris (Berdasarkan Unit Terjual)")
         top_products = main_store_latest_overall.sort_values('Terjual per Bulan', ascending=False).head(15)
-        st.dataframe(top_products[['Nama Produk', 'SKU', 'Harga', 'Terjual per Bulan', 'Omzet']].style.format({"Harga": format_rupiah, "Omzet": format_rupiah}), use_container_width=True)
+        st.dataframe(top_products[['Nama Produk', 'SKU', 'Harga', 'Terjual per Bulan', 'Omzet']].style.format({"Harga": format_rupiah, "Omzet": format_rupiah}), use_container_width=True, hide_index=False)
         
         st.markdown("#### Distribusi Omzet per Brand")
         brand_omzet_main = main_store_latest_overall.groupby('Brand')['Omzet'].sum().reset_index()
@@ -340,7 +340,6 @@ elif main_menu == "Similarity Produk":
 
     df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
     
-    # --- PERBAIKAN: Mengambil SEMUA produk DB KLIK (Ready & Habis) untuk dropdown ---
     my_store_df = df[df['Toko'] == "DB KLIK"].copy()
     my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
     my_store_df.sort_values('Tanggal', ascending=True, inplace=True)
@@ -348,7 +347,6 @@ elif main_menu == "Similarity Produk":
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
     
-    # --- PERBAIKAN: Filter brand sebelum menampilkan daftar produk ---
     brand_list = ["Semua Brand"] + sorted(my_store_df['Brand'].unique().tolist())
     selected_brand_filter = st.selectbox("Filter berdasarkan Brand:", brand_list)
 
@@ -393,3 +391,4 @@ elif main_menu == "Tools (Peralatan)":
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
         run_sku_category_labeling_optimized(gc, SPREADSHEET_KEY)
+
