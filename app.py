@@ -1,8 +1,8 @@
 # ===================================================================================
-#  DASHBOARD ANALISIS & TOOLS - VERSI 7.4 (OPTIMIZED)
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.5 (FINAL FIX)
 #  Dibuat oleh: Firman & Asisten AI Gemini
-#  Versi ini memperbaiki logika dropdown Similarity dan mengoptimalkan
-#  alat labeling agar lebih efisien.
+#  Versi ini memperbaiki bug APIError, logika dropdown Similarity, dan
+#  memastikan semua fungsionalitas berjalan dengan stabil.
 # ===================================================================================
 
 import streamlit as st
@@ -66,7 +66,7 @@ def load_all_data(spreadsheet_key):
         sheet_name = worksheet.title
         try:
             if "DATABASE" == sheet_name.upper():
-                database_df = pd.DataFrame(worksheet.get_all_records())
+                database_df = pd.DataFrame(worksheet.get_all_records(head=1))
             elif "REKAP" in sheet_name.upper():
                 all_values = worksheet.get_all_values()
                 if not all_values or len(all_values) < 2: continue
@@ -109,8 +109,7 @@ def format_rupiah(val):
 # ================================
 # FUNGSI UNTUK ALAT SIMILARITY PRODUK
 # ================================
-def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competitor_df, score_cutoff=0.6):
-    selected_product = my_store_df[my_store_df['SKU'] == selected_product_sku].iloc[0]
+def find_matches_for_similarity_tool(selected_product, my_store_df, competitor_df, score_cutoff=0.6):
     selected_brand = selected_product['Brand']
     
     competitor_filtered = competitor_df[competitor_df['Brand'] == selected_brand].copy()
@@ -134,7 +133,7 @@ def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competit
     return results
 
 # ================================
-# --- BARU: FUNGSI UNTUK ALAT LABELING (OPTIMIZED) ---
+# FUNGSI UNTUK ALAT LABELING (OPTIMIZED)
 # ================================
 def run_sku_category_labeling_optimized(gc, spreadsheet_key):
     placeholder = st.empty()
@@ -148,9 +147,9 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
         db_klik_ready_sheet = spreadsheet.worksheet("DB KLIK - REKAP - READY")
         db_klik_habis_sheet = spreadsheet.worksheet("DB KLIK - REKAP - HABIS")
 
-        database_df = pd.DataFrame(db_sheet.get_all_records())
-        db_klik_ready_df = pd.DataFrame(db_klik_ready_sheet.get_all_records())
-        db_klik_habis_df = pd.DataFrame(db_klik_habis_sheet.get_all_records())
+        database_df = pd.DataFrame(db_sheet.get_all_records(head=1))
+        db_klik_ready_df = pd.DataFrame(db_klik_ready_sheet.get_all_records(head=1))
+        db_klik_habis_df = pd.DataFrame(db_klik_habis_sheet.get_all_records(head=1))
     except Exception as e:
         with placeholder.container(): st.error(f"Gagal membuka worksheet: {e}"); return
 
@@ -158,29 +157,28 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
     database_df['Nama Normalisasi'] = database_df['NAMA'].apply(normalize_text)
     db_klik_ready_df['Nama Normalisasi'] = db_klik_ready_df['NAMA'].apply(normalize_text)
     db_klik_habis_df['Nama Normalisasi'] = db_klik_habis_df['NAMA'].apply(normalize_text)
-
+    
     updates_ready, updates_habis = [], []
     
-    combined_db_klik_df = pd.concat([db_klik_ready_df.assign(sheet='ready'), db_klik_habis_df.assign(sheet='habis')], ignore_index=True)
+    # --- PERBAIKAN: Menggabungkan tanpa mereset index asli ---
+    db_klik_ready_df['sheet'] = 'ready'
+    db_klik_habis_df['sheet'] = 'habis'
+    combined_db_klik_df = pd.concat([db_klik_ready_df, db_klik_habis_df])
+    
     all_brands = combined_db_klik_df['BRAND'].unique()
-
     total_brands = len(all_brands)
     prog.progress(50, text=f"Langkah 3/4: Memproses 0/{total_brands} brand...")
 
-    # --- INTI OPTIMISASI: Proses per brand ---
     for i, brand in enumerate(all_brands):
         prog.progress(50 + int((i / total_brands) * 40), text=f"Langkah 3/4: Memproses brand '{brand}' ({i+1}/{total_brands})...")
         
         db_brand_df = database_df[database_df['BRAND'] == brand]
         klik_brand_df = combined_db_klik_df[combined_db_klik_df['BRAND'] == brand]
-        
-        if db_brand_df.empty or klik_brand_df.empty:
-            continue
+        if db_brand_df.empty or klik_brand_df.empty: continue
 
         vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(3, 6))
         all_names = pd.concat([db_brand_df['Nama Normalisasi'], klik_brand_df['Nama Normalisasi']]).unique()
         vectorizer.fit(all_names)
-
         db_vectors = vectorizer.transform(db_brand_df['Nama Normalisasi'])
         klik_vectors = vectorizer.transform(klik_brand_df['Nama Normalisasi'])
         
@@ -193,29 +191,28 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
             sku_col_habis = db_klik_habis_df.columns.to_list().index('SKU') + 1
             kategori_col_habis = db_klik_habis_df.columns.to_list().index('KATEGORI') + 1
         except ValueError:
-            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di salah satu sheet DB KLIK."); return
+            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan."); return
 
         for j, match_idx in enumerate(best_matches_indices):
             original_row = klik_brand_df.iloc[j]
             best_match_db = db_brand_df.iloc[match_idx]
             
-            # Tentukan sheet mana yang akan diupdate
-            row_index_in_sheet = original_row.name # index asli sebelum digabung
+            row_index_in_sheet = original_row.name + 2 # .name adalah index asli (mulai dari 0), +2 untuk baris sheet
             
             if original_row['sheet'] == 'ready':
-                updates_ready.append({'range': f'R{row_index_in_sheet + 2}C{sku_col_ready}', 'values': [[best_match_db['SKU']]]})
-                updates_ready.append({'range': f'R{row_index_in_sheet + 2}C{kategori_col_ready}', 'values': [[best_match_db['KATEGORI']]]})
-            else: # sheet == 'habis'
-                updates_habis.append({'range': f'R{row_index_in_sheet + 2}C{sku_col_habis}', 'values': [[best_match_db['SKU']]]})
-                updates_habis.append({'range': f'R{row_index_in_sheet + 2}C{kategori_col_habis}', 'values': [[best_match_db['KATEGORI']]]})
+                updates_ready.append({'range': f'R{row_index_in_sheet}C{sku_col_ready}', 'values': [[best_match_db['SKU']]]})
+                updates_ready.append({'range': f'R{row_index_in_sheet}C{kategori_col_ready}', 'values': [[best_match_db['KATEGORI']]]})
+            else:
+                updates_habis.append({'range': f'R{row_index_in_sheet}C{sku_col_habis}', 'values': [[best_match_db['SKU']]]})
+                updates_habis.append({'range': f'R{row_index_in_sheet}C{kategori_col_habis}', 'values': [[best_match_db['KATEGORI']]]})
     
     prog.progress(95, text="Langkah 4/4: Menulis pembaruan ke Google Sheets...")
     try:
         with st.spinner("Menulis pembaruan... Ini mungkin memakan waktu beberapa saat."):
             if updates_ready:
-                db_klik_ready_sheet.batch_update(updates_ready)
+                db_klik_ready_sheet.batch_update(updates_ready, value_input_option='USER_ENTERED')
             if updates_habis:
-                db_klik_habis_sheet.batch_update(updates_habis)
+                db_klik_habis_sheet.batch_update(updates_habis, value_input_option='USER_ENTERED')
         prog.progress(100)
         with placeholder.container(): st.success(f"Labeling Selesai! {len(updates_ready)//2} produk READY dan {len(updates_habis)//2} produk HABIS telah diperbarui.")
         load_all_data.clear()
@@ -341,23 +338,37 @@ elif main_menu == "Similarity Produk":
     st.sidebar.header("Filter Similarity")
     accuracy_cutoff = st.sidebar.slider("Tingkat Akurasi Minimum (%)", 50, 100, 65, 1)
 
-    # --- PERBAIKAN: Mengambil SEMUA produk DB KLIK (Ready & Habis) untuk dropdown ---
     df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
+    
+    # --- PERBAIKAN: Mengambil SEMUA produk DB KLIK (Ready & Habis) untuk dropdown ---
     my_store_df = df[df['Toko'] == "DB KLIK"].copy()
     my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
-    my_store_df.drop_duplicates(subset='SKU', keep='last', inplace=True) # Ambil data terupdate
+    my_store_df.sort_values('Tanggal', ascending=True, inplace=True)
+    my_store_df.drop_duplicates(subset='SKU', keep='last', inplace=True)
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
-    product_list = sorted(my_store_df['Nama Produk'].unique().tolist())
+    
+    # --- PERBAIKAN: Filter brand sebelum menampilkan daftar produk ---
+    brand_list = ["Semua Brand"] + sorted(my_store_df['Brand'].unique().tolist())
+    selected_brand_filter = st.selectbox("Filter berdasarkan Brand:", brand_list)
 
-    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang ditemukan."); st.stop()
-    selected_name = st.selectbox("Pilih Produk Anda (DB KLIK):", product_list)
+    if selected_brand_filter != "Semua Brand":
+        product_list_df = my_store_df[my_store_df['Brand'] == selected_brand_filter]
+    else:
+        product_list_df = my_store_df
+        
+    product_list = sorted(product_list_df['Nama Produk'].unique().tolist())
+
+    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang cocok dengan filter brand."); st.stop()
+    
+    st.caption("Anda bisa mengetik di dalam kotak di bawah untuk mencari produk.")
+    selected_name = st.selectbox("Pilih Produk Anda (DB KLIK):", product_list, label_visibility="collapsed")
 
     if st.button("🔍 Analisis Produk", type="primary"):
         if selected_name:
-            selected_sku = my_store_df[my_store_df['Nama Produk'] == selected_name].iloc[0]['SKU']
+            selected_product_row = my_store_df[my_store_df['Nama Produk'] == selected_name].iloc[0]
             with st.spinner("Menganalisis kemiripan produk..."):
-                matches = find_matches_for_similarity_tool(selected_sku, my_store_df, competitor_df, score_cutoff=accuracy_cutoff/100)
+                matches = find_matches_for_similarity_tool(selected_product_row, my_store_df, competitor_df, score_cutoff=accuracy_cutoff/100)
             
             st.subheader("Hasil Analisis")
             display_df = pd.DataFrame(matches).sort_values(by='Skor Kemiripan (%)', ascending=False)
@@ -382,4 +393,3 @@ elif main_menu == "Tools (Peralatan)":
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
         run_sku_category_labeling_optimized(gc, SPREADSHEET_KEY)
-
