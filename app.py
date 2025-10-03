@@ -1,8 +1,8 @@
 # ===================================================================================
-#  DASHBOARD ANALISIS & TOOLS - VERSI 7.5 (FINAL FIX)
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.3 (FINAL INTEGRATION)
 #  Dibuat oleh: Firman & Asisten AI Gemini
-#  Versi ini memperbaiki bug APIError, logika dropdown Similarity, dan
-#  memastikan semua fungsionalitas berjalan dengan stabil.
+#  Versi ini memperbaiki NameError dan melengkapi semua fungsionalitas tab
+#  dalam struktur menu yang terintegrasi.
 # ===================================================================================
 
 import streamlit as st
@@ -162,7 +162,6 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
     
     db_klik_ready_df['sheet'] = 'ready'
     db_klik_habis_df['sheet'] = 'habis'
-    # --- PERBAIKAN: Menyimpan index asli sebelum concat ---
     combined_db_klik_df = pd.concat([db_klik_ready_df, db_klik_habis_df])
     
     all_brands = combined_db_klik_df['BRAND'].unique()
@@ -197,7 +196,6 @@ def run_sku_category_labeling_optimized(gc, spreadsheet_key):
             original_row = klik_brand_df.iloc[j]
             best_match_db = db_brand_df.iloc[match_idx]
             
-            # --- PERBAIKAN: Menggunakan index asli yang disimpan ---
             row_index_in_sheet = original_row.name + 2 
             
             if original_row['sheet'] == 'ready':
@@ -260,6 +258,7 @@ if main_menu == "Dashboard Analisis":
     df_filtered = df[(df['Tanggal'] >= start_date_dt) & (df['Tanggal'] <= end_date_dt)].copy()
     if df_filtered.empty: st.error("Tidak ada data di rentang tanggal yang dipilih."); st.stop()
 
+    # --- PERBAIKAN: Mendefinisikan variabel yang dibutuhkan oleh semua tab ---
     my_store_name = "DB KLIK"
     df_filtered['Minggu'] = df_filtered['Tanggal'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
     latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
@@ -341,12 +340,10 @@ elif main_menu == "Similarity Produk":
 
     df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
     
-    # --- PERBAIKAN: Mengambil SEMUA produk DB KLIK (Ready & Habis) untuk dropdown ---
     my_store_df = df[df['Toko'] == "DB KLIK"].copy()
     my_store_df.sort_values('Tanggal', ascending=True, inplace=True)
-    # Menggunakan Nama Produk sebagai kunci unik jika SKU kosong
-    my_store_df['Unique Key'] = my_store_df['SKU'].fillna(my_store_df['Nama Produk'])
-    my_store_df.drop_duplicates(subset='Unique Key', keep='last', inplace=True)
+    my_store_df.drop_duplicates(subset='Nama Produk', keep='last', inplace=True)
+    my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True) # Tetap filter untuk produk yang valid
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
     
@@ -394,3 +391,4 @@ elif main_menu == "Tools (Peralatan)":
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
         run_sku_category_labeling_optimized(gc, SPREADSHEET_KEY)
+
