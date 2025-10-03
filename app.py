@@ -1,8 +1,8 @@
 # ===================================================================================
-#  DASHBOARD ANALISIS & TOOLS - VERSI 7.3 (FINAL INTEGRATION)
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.4 (OPTIMIZED)
 #  Dibuat oleh: Firman & Asisten AI Gemini
-#  Versi ini memperbaiki NameError dan melengkapi semua fungsionalitas tab
-#  dalam struktur menu yang terintegrasi.
+#  Versi ini memperbaiki logika dropdown Similarity dan mengoptimalkan
+#  alat labeling agar lebih efisien.
 # ===================================================================================
 
 import streamlit as st
@@ -115,7 +115,7 @@ def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competit
     
     competitor_filtered = competitor_df[competitor_df['Brand'] == selected_brand].copy()
     
-    results = [{'Nama Produk Tercantum': selected_product['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product['Harga'], 'Status Stok': 'Tersedia', 'Skor Kemiripan (%)': 100}]
+    results = [{'Nama Produk Tercantum': selected_product['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product['Harga'], 'Status Stok': selected_product['Status'], 'Skor Kemiripan (%)': 100}]
     if competitor_filtered.empty: 
         return results
 
@@ -127,7 +127,6 @@ def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competit
     vec_competitor = vectorizer.transform(competitor_filtered['Nama Normalisasi'])
     similarities = cosine_similarity(vec_selected, vec_competitor)[0]
 
-    my_price = selected_product['Harga']
     for i, score in enumerate(similarities):
         if score >= score_cutoff:
             match = competitor_filtered.iloc[i]
@@ -135,13 +134,13 @@ def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competit
     return results
 
 # ================================
-# FUNGSI UNTUK ALAT LABELING
+# --- BARU: FUNGSI UNTUK ALAT LABELING (OPTIMIZED) ---
 # ================================
-def run_sku_category_labeling(gc, spreadsheet_key):
+def run_sku_category_labeling_optimized(gc, spreadsheet_key):
     placeholder = st.empty()
     with placeholder.container():
-        st.info("Memulai proses labeling otomatis...")
-        prog = st.progress(0, text="Langkah 1/5: Memuat data...")
+        st.info("Memulai proses labeling otomatis (Optimized)...")
+        prog = st.progress(0, text="Langkah 1/4: Memuat data...")
 
     try:
         spreadsheet = gc.open_by_key(spreadsheet_key)
@@ -155,67 +154,70 @@ def run_sku_category_labeling(gc, spreadsheet_key):
     except Exception as e:
         with placeholder.container(): st.error(f"Gagal membuka worksheet: {e}"); return
 
-    for df, name in [(database_df, "DATABASE"), (db_klik_ready_df, "DB KLIK READY"), (db_klik_habis_df, "DB KLIK HABIS")]:
-        if "NAMA" not in df.columns:
-            with placeholder.container(): st.error(f"Kolom 'NAMA' tidak ditemukan di sheet '{name}'."); return
-    if "SKU" not in database_df.columns or "KATEGORI" not in database_df.columns:
-        with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet 'DATABASE'."); return
-    
-    prog.progress(20, text="Langkah 2/5: Normalisasi teks...")
+    prog.progress(25, text="Langkah 2/4: Normalisasi teks...")
     database_df['Nama Normalisasi'] = database_df['NAMA'].apply(normalize_text)
     db_klik_ready_df['Nama Normalisasi'] = db_klik_ready_df['NAMA'].apply(normalize_text)
     db_klik_habis_df['Nama Normalisasi'] = db_klik_habis_df['NAMA'].apply(normalize_text)
 
-    prog.progress(40, text="Langkah 3/5: Membangun model TF-IDF...")
-    all_names = pd.concat([database_df['Nama Normalisasi'], db_klik_ready_df['Nama Normalisasi'], db_klik_habis_df['Nama Normalisasi']]).unique()
-    vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(3, 6))
-    vectorizer.fit(all_names)
-    db_vectors = vectorizer.transform(database_df['Nama Normalisasi'])
-
     updates_ready, updates_habis = [], []
+    
+    combined_db_klik_df = pd.concat([db_klik_ready_df.assign(sheet='ready'), db_klik_habis_df.assign(sheet='habis')], ignore_index=True)
+    all_brands = combined_db_klik_df['BRAND'].unique()
 
-    prog.progress(60, text=f"Langkah 4/5: Mencocokkan {len(db_klik_ready_df)} produk 'READY'...")
-    if not db_klik_ready_df.empty:
-        ready_vectors = vectorizer.transform(db_klik_ready_df['Nama Normalisasi'])
-        similarities_ready = cosine_similarity(ready_vectors, db_vectors)
-        best_matches_indices_ready = similarities_ready.argmax(axis=1)
+    total_brands = len(all_brands)
+    prog.progress(50, text=f"Langkah 3/4: Memproses 0/{total_brands} brand...")
+
+    # --- INTI OPTIMISASI: Proses per brand ---
+    for i, brand in enumerate(all_brands):
+        prog.progress(50 + int((i / total_brands) * 40), text=f"Langkah 3/4: Memproses brand '{brand}' ({i+1}/{total_brands})...")
         
+        db_brand_df = database_df[database_df['BRAND'] == brand]
+        klik_brand_df = combined_db_klik_df[combined_db_klik_df['BRAND'] == brand]
+        
+        if db_brand_df.empty or klik_brand_df.empty:
+            continue
+
+        vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(3, 6))
+        all_names = pd.concat([db_brand_df['Nama Normalisasi'], klik_brand_df['Nama Normalisasi']]).unique()
+        vectorizer.fit(all_names)
+
+        db_vectors = vectorizer.transform(db_brand_df['Nama Normalisasi'])
+        klik_vectors = vectorizer.transform(klik_brand_df['Nama Normalisasi'])
+        
+        similarities = cosine_similarity(klik_vectors, db_vectors)
+        best_matches_indices = similarities.argmax(axis=1)
+
         try:
             sku_col_ready = db_klik_ready_df.columns.to_list().index('SKU') + 1
             kategori_col_ready = db_klik_ready_df.columns.to_list().index('KATEGORI') + 1
-        except ValueError:
-            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - READY."); return
-
-        for i, match_idx in enumerate(best_matches_indices_ready):
-            best_match = database_df.iloc[match_idx]
-            updates_ready.append({'range': f'R{i+2}C{sku_col_ready}', 'values': [[best_match['SKU']]]})
-            updates_ready.append({'range': f'R{i+2}C{kategori_col_ready}', 'values': [[best_match['KATEGORI']]]})
-
-    prog.progress(80, text=f"Langkah 5/5: Mencocokkan {len(db_klik_habis_df)} produk 'HABIS'...")
-    if not db_klik_habis_df.empty:
-        habis_vectors = vectorizer.transform(db_klik_habis_df['Nama Normalisasi'])
-        similarities_habis = cosine_similarity(habis_vectors, db_vectors)
-        best_matches_indices_habis = similarities_habis.argmax(axis=1)
-
-        try:
             sku_col_habis = db_klik_habis_df.columns.to_list().index('SKU') + 1
             kategori_col_habis = db_klik_habis_df.columns.to_list().index('KATEGORI') + 1
         except ValueError:
-            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - HABIS."); return
+            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di salah satu sheet DB KLIK."); return
 
-        for i, match_idx in enumerate(best_matches_indices_habis):
-            best_match = database_df.iloc[match_idx]
-            updates_habis.append({'range': f'R{i+2}C{sku_col_habis}', 'values': [[best_match['SKU']]]})
-            updates_habis.append({'range': f'R{i+2}C{kategori_col_habis}', 'values': [[best_match['KATEGORI']]]})
+        for j, match_idx in enumerate(best_matches_indices):
+            original_row = klik_brand_df.iloc[j]
+            best_match_db = db_brand_df.iloc[match_idx]
             
+            # Tentukan sheet mana yang akan diupdate
+            row_index_in_sheet = original_row.name # index asli sebelum digabung
+            
+            if original_row['sheet'] == 'ready':
+                updates_ready.append({'range': f'R{row_index_in_sheet + 2}C{sku_col_ready}', 'values': [[best_match_db['SKU']]]})
+                updates_ready.append({'range': f'R{row_index_in_sheet + 2}C{kategori_col_ready}', 'values': [[best_match_db['KATEGORI']]]})
+            else: # sheet == 'habis'
+                updates_habis.append({'range': f'R{row_index_in_sheet + 2}C{sku_col_habis}', 'values': [[best_match_db['SKU']]]})
+                updates_habis.append({'range': f'R{row_index_in_sheet + 2}C{kategori_col_habis}', 'values': [[best_match_db['KATEGORI']]]})
+    
+    prog.progress(95, text="Langkah 4/4: Menulis pembaruan ke Google Sheets...")
     try:
-        with st.spinner("Menulis pembaruan ke Google Sheets..."):
+        with st.spinner("Menulis pembaruan... Ini mungkin memakan waktu beberapa saat."):
             if updates_ready:
                 db_klik_ready_sheet.batch_update(updates_ready)
             if updates_habis:
                 db_klik_habis_sheet.batch_update(updates_habis)
         prog.progress(100)
-        with placeholder.container(): st.success(f"Labeling Selesai! {len(db_klik_ready_df)} produk READY dan {len(db_klik_habis_df)} produk HABIS telah diperbarui.")
+        with placeholder.container(): st.success(f"Labeling Selesai! {len(updates_ready)//2} produk READY dan {len(updates_habis)//2} produk HABIS telah diperbarui.")
         load_all_data.clear()
     except Exception as e:
         with placeholder.container(): st.error(f"Gagal menulis ke Google Sheets: {e}")
@@ -260,14 +262,12 @@ if main_menu == "Dashboard Analisis":
     df_filtered = df[(df['Tanggal'] >= start_date_dt) & (df['Tanggal'] <= end_date_dt)].copy()
     if df_filtered.empty: st.error("Tidak ada data di rentang tanggal yang dipilih."); st.stop()
 
-    # --- PERBAIKAN: Mendefinisikan variabel yang dibutuhkan oleh semua tab ---
     my_store_name = "DB KLIK"
     df_filtered['Minggu'] = df_filtered['Tanggal'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
     latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
     main_store_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] == my_store_name]
     competitor_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] != my_store_name]
     latest_entries_weekly = df_filtered.loc[df_filtered.groupby(['Minggu', 'Toko', 'Nama Produk'])['Tanggal'].idxmax()]
-
 
     tab1, tab3, tab4, tab5, tab6 = st.tabs(["⭐ Toko Saya", "🏆 Brand Kompetitor", "📦 Status Stok", "📈 Kinerja Penjualan", "📊 Produk Baru"])
     
@@ -341,15 +341,16 @@ elif main_menu == "Similarity Produk":
     st.sidebar.header("Filter Similarity")
     accuracy_cutoff = st.sidebar.slider("Tingkat Akurasi Minimum (%)", 50, 100, 65, 1)
 
+    # --- PERBAIKAN: Mengambil SEMUA produk DB KLIK (Ready & Habis) untuk dropdown ---
     df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
-    my_store_df = df[(df['Toko'] == "DB KLIK") & (df['Status'] == 'Tersedia')].copy()
+    my_store_df = df[df['Toko'] == "DB KLIK"].copy()
     my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
-    my_store_df.drop_duplicates(subset='SKU', inplace=True)
+    my_store_df.drop_duplicates(subset='SKU', keep='last', inplace=True) # Ambil data terupdate
     
     competitor_df = df[df['Toko'] != "DB KLIK"].copy()
     product_list = sorted(my_store_df['Nama Produk'].unique().tolist())
 
-    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang tersedia untuk dianalisis."); st.stop()
+    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang ditemukan."); st.stop()
     selected_name = st.selectbox("Pilih Produk Anda (DB KLIK):", product_list)
 
     if st.button("🔍 Analisis Produk", type="primary"):
@@ -380,5 +381,5 @@ elif main_menu == "Tools (Peralatan)":
     st.subheader("Labeling SKU dan Kategori Otomatis")
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
-        run_sku_category_labeling(gc, SPREADSHEET_KEY)
+        run_sku_category_labeling_optimized(gc, SPREADSHEET_KEY)
 
