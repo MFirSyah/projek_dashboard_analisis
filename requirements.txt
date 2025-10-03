@@ -1,7 +1,9 @@
 streamlit
 pandas
-plotly
-gspread
-gspread-dataframe
 numpy
+plotly
 scikit-learn
+openpyxl
+xlsxwriter
+gspread
+google-auth-oauthlib
