@@ -1,10 +1,8 @@
 # ===================================================================================
-#  DASHBOARD ANALISIS & TOOLS - VERSI 7.0 (INTEGRATED)
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.2 (COLUMN NAME FIX)
 #  Dibuat oleh: Firman & Asisten AI Gemini
-#  Versi ini mengintegrasikan tiga modul utama:
-#  1. Dashboard Analisis Umum
-#  2. Alat Similarity Produk (Standalone)
-#  3. Alat Auto-Labeling SKU & Kategori
+#  Versi ini memperbaiki KeyError dengan menyamakan penamaan kolom 'Toko'
+#  dan meningkatkan stabilitas pemrosesan data.
 # ===================================================================================
 
 import streamlit as st
@@ -84,17 +82,28 @@ def load_all_data(spreadsheet_key):
     rekap_df = pd.concat(rekap_list_df, ignore_index=True)
     
     rekap_df.columns = [str(c).strip().upper() for c in rekap_df.columns]
-    final_rename = {'NAMA': 'Nama Produk', 'TERJUAL/BLN': 'Terjual per Bulan', 'TANGGAL': 'Tanggal', 'HARGA': 'Harga', 'BRAND': 'Brand', 'STATUS': 'Status', 'KATEGORI': 'Kategori', 'SKU': 'SKU'}
+    
+    # --- PERBAIKAN KUNCI: Menambahkan 'TOKO': 'Toko' ke kamus rename ---
+    final_rename = {
+        'NAMA': 'Nama Produk', 'TERJUAL/BLN': 'Terjual per Bulan', 'TANGGAL': 'Tanggal', 
+        'HARGA': 'Harga', 'BRAND': 'Brand', 'STATUS': 'Status', 
+        'KATEGORI': 'Kategori', 'SKU': 'SKU', 'TOKO': 'Toko'
+    }
     rekap_df.rename(columns=final_rename, inplace=True)
     
+    required_cols = ['Tanggal', 'Nama Produk', 'Harga', 'Toko']
+    missing_cols = [col for col in required_cols if col not in rekap_df.columns]
+    if missing_cols:
+        st.error(f"Kolom wajib berikut tidak ditemukan: {', '.join(missing_cols)}.")
+        return None, None
+        
     rekap_df['Tanggal'] = pd.to_datetime(rekap_df['Tanggal'], errors='coerce', dayfirst=True)
     rekap_df['Harga'] = pd.to_numeric(rekap_df['Harga'].astype(str).str.replace(r'[^\d]', '', regex=True), errors='coerce')
-    rekap_df['Terjual per Bulan'] = pd.to_numeric(rekap_df['Terjual per Bulan'], errors='coerce').fillna(0)
-    rekap_df.dropna(subset=['Tanggal', 'Nama Produk', 'Harga', 'Toko'], inplace=True)
+    rekap_df['Terjual per Bulan'] = pd.to_numeric(rekap_df.get('Terjual per Bulan'), errors='coerce').fillna(0)
+    rekap_df.dropna(subset=required_cols, inplace=True)
     
     if 'Brand' not in rekap_df.columns: rekap_df['Brand'] = rekap_df['Nama Produk'].str.split().str[0]
     rekap_df['Brand'].fillna("LAINNYA", inplace=True)
-
     rekap_df['Omzet'] = (rekap_df['Harga'].fillna(0) * rekap_df['Terjual per Bulan'].fillna(0)).astype(int)
     
     return rekap_df.sort_values('Tanggal'), database_df
@@ -179,10 +188,9 @@ def run_sku_category_labeling(gc, spreadsheet_key):
         best_matches_indices_ready = similarities_ready.argmax(axis=1)
         
         try:
-            # Menggunakan .get_loc() untuk mencari posisi kolom secara dinamis
-            sku_col_ready = db_klik_ready_df.columns.get_loc('SKU') + 1
-            kategori_col_ready = db_klik_ready_df.columns.get_loc('KATEGORI') + 1
-        except KeyError:
+            sku_col_ready = db_klik_ready_df.columns.to_list().index('SKU') + 1
+            kategori_col_ready = db_klik_ready_df.columns.to_list().index('KATEGORI') + 1
+        except ValueError:
             with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - READY."); return
 
         for i, match_idx in enumerate(best_matches_indices_ready):
@@ -197,9 +205,9 @@ def run_sku_category_labeling(gc, spreadsheet_key):
         best_matches_indices_habis = similarities_habis.argmax(axis=1)
 
         try:
-            sku_col_habis = db_klik_habis_df.columns.get_loc('SKU') + 1
-            kategori_col_habis = db_klik_habis_df.columns.get_loc('KATEGORI') + 1
-        except KeyError:
+            sku_col_habis = db_klik_habis_df.columns.to_list().index('SKU') + 1
+            kategori_col_habis = db_klik_habis_df.columns.to_list().index('KATEGORI') + 1
+        except ValueError:
             with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - HABIS."); return
 
         for i, match_idx in enumerate(best_matches_indices_habis):
@@ -208,7 +216,7 @@ def run_sku_category_labeling(gc, spreadsheet_key):
             updates_habis.append({'range': f'R{i+2}C{kategori_col_habis}', 'values': [[best_match['KATEGORI']]]})
             
     try:
-        with st.spinner("Menulis pembaruan ke Google Sheets... Ini mungkin memakan waktu beberapa saat."):
+        with st.spinner("Menulis pembaruan ke Google Sheets..."):
             if updates_ready:
                 db_klik_ready_sheet.batch_update(updates_ready)
             if updates_habis:
@@ -230,7 +238,6 @@ except KeyError:
 
 gc = connect_to_gsheets()
 
-# --- Tombol utama untuk memuat data sekali di awal ---
 if 'data_loaded' not in st.session_state:
     if st.button("Tarik Data & Mulai Analisis 🚀", type="primary"):
         df_data, db_df_data = load_all_data(SPREADSHEET_KEY)
@@ -240,21 +247,17 @@ if 'data_loaded' not in st.session_state:
             st.session_state.data_loaded = True
             st.rerun()
         else:
-            st.error("Gagal memuat data utama.")
+            st.error("Gagal memuat data utama. Silakan periksa pesan error di atas.")
+    st.info("👆 Klik tombol untuk menarik semua data yang diperlukan untuk analisis.")
     st.stop()
 
 df = st.session_state.df
 
-# --- Sidebar Utama untuk Navigasi ---
 st.sidebar.header("Menu Utama")
 main_menu = st.sidebar.radio("Pilih Alat:", ("Dashboard Analisis", "Similarity Produk", "Tools (Peralatan)"))
 
 if main_menu == "Dashboard Analisis":
-    # ================================
-    # BAGIAN DASHBOARD ANALISIS
-    # ================================
     st.header("📈 Dashboard Analisis Penjualan & Kompetitor")
-    
     st.sidebar.header("Filter Dashboard")
     min_date_val, max_date_val = df['Tanggal'].min().date(), df['Tanggal'].max().date()
     start_date, end_date = st.sidebar.date_input("Rentang Tanggal:", [min_date_val, max_date_val], min_value=min_date_val, max_value=max_date_val)
@@ -409,12 +412,8 @@ if main_menu == "Dashboard Analisis":
                             st.dataframe(new_products_df[['Nama Produk', 'Harga', 'Brand']], use_container_width=True, hide_index=True)
 
 elif main_menu == "Similarity Produk":
-    # ================================
-    # BAGIAN ALAT SIMILARITY PRODUK
-    # ================================
     st.header("⚖️ Alat Analisis Similarity Produk")
     st.info("Alat ini menggunakan TF-IDF dan Validasi Brand untuk menemukan produk serupa.")
-
     st.sidebar.header("Filter Similarity")
     accuracy_cutoff = st.sidebar.slider("Tingkat Akurasi Minimum (%)", 50, 100, 65, 1)
 
@@ -448,12 +447,10 @@ elif main_menu == "Similarity Produk":
                 display_df['Selisih Harga'] = display_df['Selisih'].apply(format_selisih)
                 st.dataframe(display_df[['Nama Produk Tercantum', 'Toko', 'Harga', 'Selisih Harga', 'Status Stok', 'Skor Kemiripan (%)']], use_container_width=True, hide_index=True)
             else:
-                st.warning("Tidak ditemukan produk yang cocok.")
+                st.dataframe(pd.DataFrame(matches)[['Nama Produk Tercantum', 'Toko', 'Harga', 'Status Stok', 'Skor Kemiripan (%)']], use_container_width=True, hide_index=True)
+                st.warning("Tidak ditemukan produk yang cocok di kompetitor.")
 
 elif main_menu == "Tools (Peralatan)":
-    # ================================
-    # BAGIAN ALAT LABELING
-    # ================================
     st.header("🛠️ Tools (Peralatan)")
     st.subheader("Labeling SKU dan Kategori Otomatis")
     st.warning("PERHATIAN: Proses ini akan **menimpa (rewrite)** data SKU dan Kategori pada sheet `DB KLIK - REKAP - READY` dan `DB KLIK - REKAP - HABIS` secara permanen. Gunakan dengan hati-hati.")
