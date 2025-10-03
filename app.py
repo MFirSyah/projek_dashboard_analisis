@@ -1,3 +1,12 @@
+# ===================================================================================
+#  DASHBOARD ANALISIS & TOOLS - VERSI 7.0 (INTEGRATED)
+#  Dibuat oleh: Firman & Asisten AI Gemini
+#  Versi ini mengintegrasikan tiga modul utama:
+#  1. Dashboard Analisis Umum
+#  2. Alat Similarity Produk (Standalone)
+#  3. Alat Auto-Labeling SKU & Kategori
+# ===================================================================================
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -74,7 +83,6 @@ def load_all_data(spreadsheet_key):
     if not rekap_list_df: return None, None
     rekap_df = pd.concat(rekap_list_df, ignore_index=True)
     
-    # Pembersihan dan standardisasi
     rekap_df.columns = [str(c).strip().upper() for c in rekap_df.columns]
     final_rename = {'NAMA': 'Nama Produk', 'TERJUAL/BLN': 'Terjual per Bulan', 'TANGGAL': 'Tanggal', 'HARGA': 'Harga', 'BRAND': 'Brand', 'STATUS': 'Status', 'KATEGORI': 'Kategori', 'SKU': 'SKU'}
     rekap_df.rename(columns=final_rename, inplace=True)
@@ -86,7 +94,6 @@ def load_all_data(spreadsheet_key):
     
     if 'Brand' not in rekap_df.columns: rekap_df['Brand'] = rekap_df['Nama Produk'].str.split().str[0]
     rekap_df['Brand'].fillna("LAINNYA", inplace=True)
-
     rekap_df['Omzet'] = (rekap_df['Harga'].fillna(0) * rekap_df['Terjual per Bulan'].fillna(0)).astype(int)
     
     return rekap_df.sort_values('Tanggal'), database_df
@@ -103,7 +110,9 @@ def find_matches_for_similarity_tool(selected_product_sku, my_store_df, competit
     selected_brand = selected_product['Brand']
     
     competitor_filtered = competitor_df[competitor_df['Brand'] == selected_brand].copy()
-    if competitor_filtered.empty: return []
+    if competitor_filtered.empty: 
+        # --- PERBAIKAN: Selalu kembalikan produk itu sendiri meskipun tidak ada tandingan ---
+        return [{'Nama Produk Tercantum': selected_product['Nama Produk'], 'Toko': 'DB KLIK (Anda)', 'Harga': selected_product['Harga'], 'Status Stok': 'Tersedia', 'Skor Kemiripan (%)': 100}]
 
     all_names = pd.concat([my_store_df['Nama Normalisasi'], competitor_filtered['Nama Normalisasi']]).unique()
     vectorizer = TfidfVectorizer(analyzer='char_wb', ngram_range=(3, 6))
@@ -144,7 +153,6 @@ def run_sku_category_labeling(gc, spreadsheet_key):
     except Exception as e:
         with placeholder.container(): st.error(f"Gagal membuka worksheet: {e}"); return
 
-    # Pastikan kolom-kolom penting ada
     for df, name in [(database_df, "DATABASE"), (db_klik_ready_df, "DB KLIK READY"), (db_klik_habis_df, "DB KLIK HABIS")]:
         if "NAMA" not in df.columns:
             with placeholder.container(): st.error(f"Kolom 'NAMA' tidak ditemukan di sheet '{name}'."); return
@@ -164,38 +172,49 @@ def run_sku_category_labeling(gc, spreadsheet_key):
 
     updates_ready, updates_habis = [], []
 
-    # Proses sheet READY
     prog.progress(60, text=f"Langkah 4/5: Mencocokkan {len(db_klik_ready_df)} produk 'READY'...")
     ready_vectors = vectorizer.transform(db_klik_ready_df['Nama Normalisasi'])
-    similarities = cosine_similarity(ready_vectors, db_vectors)
-    best_matches_indices = similarities.argmax(axis=1)
+    similarities_ready = cosine_similarity(ready_vectors, db_vectors)
+    best_matches_indices_ready = similarities_ready.argmax(axis=1)
     
-    for i, match_idx in enumerate(best_matches_indices):
-        best_match = database_df.iloc[match_idx]
-        updates_ready.append((i + 2, db_klik_ready_df.columns.get_loc('SKU') + 1, best_match['SKU']))
-        updates_ready.append((i + 2, db_klik_ready_df.columns.get_loc('KATEGORI') + 1, best_match['KATEGORI']))
-
-    # Proses sheet HABIS
-    prog.progress(80, text=f"Langkah 5/5: Mencocokkan {len(db_klik_habis_df)} produk 'HABIS'...")
-    habis_vectors = vectorizer.transform(db_klik_habis_df['Nama Normalisasi'])
-    similarities = cosine_similarity(habis_vectors, db_vectors)
-    best_matches_indices = similarities.argmax(axis=1)
-
-    for i, match_idx in enumerate(best_matches_indices):
-        best_match = database_df.iloc[match_idx]
-        updates_habis.append((i + 2, db_klik_habis_df.columns.get_loc('SKU') + 1, best_match['SKU']))
-        updates_habis.append((i + 2, db_klik_habis_df.columns.get_loc('KATEGORI') + 1, best_match['KATEGORI']))
-        
-    # Lakukan update batch ke Google Sheets
+    # --- PERBAIKAN: Mencari posisi kolom SKU dan KATEGORI ---
     try:
-        with st.spinner("Menulis pembaruan ke Google Sheets... Ini mungkin memakan waktu beberapa saat."):
+        sku_col_ready = db_klik_ready_df.columns.get_loc('SKU') + 1
+        kategori_col_ready = db_klik_ready_df.columns.get_loc('KATEGORI') + 1
+    except KeyError:
+        with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - READY."); return
+
+    for i, match_idx in enumerate(best_matches_indices_ready):
+        best_match = database_df.iloc[match_idx]
+        updates_ready.append({'range': f'R{i+2}C{sku_col_ready}', 'values': [[best_match['SKU']]]})
+        updates_ready.append({'range': f'R{i+2}C{kategori_col_ready}', 'values': [[best_match['KATEGORI']]]})
+
+    prog.progress(80, text=f"Langkah 5/5: Mencocokkan {len(db_klik_habis_df)} produk 'HABIS'...")
+    if not db_klik_habis_df.empty:
+        habis_vectors = vectorizer.transform(db_klik_habis_df['Nama Normalisasi'])
+        similarities_habis = cosine_similarity(habis_vectors, db_vectors)
+        best_matches_indices_habis = similarities_habis.argmax(axis=1)
+
+        try:
+            sku_col_habis = db_klik_habis_df.columns.get_loc('SKU') + 1
+            kategori_col_habis = db_klik_habis_df.columns.get_loc('KATEGORI') + 1
+        except KeyError:
+            with placeholder.container(): st.error("Kolom 'SKU' atau 'KATEGORI' tidak ditemukan di sheet DB KLIK - REKAP - HABIS."); return
+
+        for i, match_idx in enumerate(best_matches_indices_habis):
+            best_match = database_df.iloc[match_idx]
+            updates_habis.append({'range': f'R{i+2}C{sku_col_habis}', 'values': [[best_match['SKU']]]})
+            updates_habis.append({'range': f'R{i+2}C{kategori_col_habis}', 'values': [[best_match['KATEGORI']]]})
+            
+    try:
+        with st.spinner("Menulis pembaruan ke Google Sheets..."):
             if updates_ready:
-                db_klik_ready_sheet.batch_update([{'range': f'R{row}C{col}', 'values': [[value]]} for row, col, value in updates_ready])
+                db_klik_ready_sheet.batch_update(updates_ready)
             if updates_habis:
-                db_klik_habis_sheet.batch_update([{'range': f'R{row}C{col}', 'values': [[value]]} for row, col, value in updates_habis])
+                db_klik_habis_sheet.batch_update(updates_habis)
         prog.progress(100)
         with placeholder.container(): st.success(f"Labeling Selesai! {len(db_klik_ready_df)} produk READY dan {len(db_klik_habis_df)} produk HABIS telah diperbarui.")
-        load_all_data.clear() # Hapus cache agar data baru bisa dimuat
+        load_all_data.clear()
     except Exception as e:
         with placeholder.container(): st.error(f"Gagal menulis ke Google Sheets: {e}")
 
@@ -210,6 +229,26 @@ except KeyError:
 
 gc = connect_to_gsheets()
 
+# --- PERBAIKAN: Muat data sekali di awal dan simpan di session state ---
+if 'data_loaded' not in st.session_state:
+    st.session_state.data_loaded = False
+    st.session_state.df = pd.DataFrame()
+    st.session_state.db_df = pd.DataFrame()
+
+if not st.session_state.data_loaded:
+    if st.button("Tarik Data & Mulai Analisis 🚀", type="primary"):
+        df_data, db_df_data = load_all_data(SPREADSHEET_KEY)
+        if df_data is not None:
+            st.session_state.df = df_data
+            st.session_state.db_df = db_df_data
+            st.session_state.data_loaded = True
+            st.rerun()
+        else:
+            st.error("Gagal memuat data utama.")
+    st.stop()
+
+df = st.session_state.df
+
 # --- Sidebar Utama untuk Navigasi ---
 st.sidebar.header("Menu Utama")
 main_menu = st.sidebar.radio("Pilih Alat:", ("Dashboard Analisis", "Similarity Produk", "Tools (Peralatan)"))
@@ -219,15 +258,9 @@ if main_menu == "Dashboard Analisis":
     # BAGIAN DASHBOARD ANALISIS
     # ================================
     st.header("📈 Dashboard Analisis Penjualan & Kompetitor")
-    if 'df' not in st.session_state:
-        df_data, _ = load_all_data(SPREADSHEET_KEY)
-        if df_data is not None:
-            st.session_state.df = df_data
-        else:
-            st.error("Gagal memuat data utama."); st.stop()
-    df = st.session_state.df
-
-    # --- Sidebar untuk Dashboard ---
+    
+    # --- PERBAIKAN: Pindahkan kontrol sidebar ke sini ---
+    st.sidebar.header("Filter Dashboard")
     min_date_val, max_date_val = df['Tanggal'].min().date(), df['Tanggal'].max().date()
     start_date, end_date = st.sidebar.date_input("Rentang Tanggal:", [min_date_val, max_date_val], min_value=min_date_val, max_value=max_date_val)
     if len((start_date, end_date)) != 2: st.sidebar.warning("Pilih 2 tanggal."); st.stop()
@@ -236,16 +269,16 @@ if main_menu == "Dashboard Analisis":
     df_filtered = df[(df['Tanggal'] >= start_date_dt) & (df['Tanggal'] <= end_date_dt)].copy()
     if df_filtered.empty: st.error("Tidak ada data di rentang tanggal yang dipilih."); st.stop()
 
+    df_filtered['Minggu'] = df_filtered['Tanggal'].dt.to_period('W-SUN').apply(lambda p: p.start_time).dt.date
+    latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
+    main_store_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] == "DB KLIK"]
+    competitor_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] != "DB KLIK"]
+
     # --- Tampilan Tab Dashboard ---
     tab1, tab3, tab4, tab5, tab6 = st.tabs(["⭐ Toko Saya", "🏆 Brand Kompetitor", "📦 Status Stok", "📈 Kinerja Penjualan", "📊 Produk Baru"])
     
-    my_store_name = "DB KLIK"
-    latest_entries_overall = df_filtered.loc[df_filtered.groupby(['Toko', 'Nama Produk'])['Tanggal'].idxmax()]
-    main_store_latest_overall = latest_entries_overall[latest_entries_overall['Toko'] == my_store_name]
-  
     with tab1:
-        st.subheader(f"Analisis Kinerja Toko: {my_store_name}")
-        
+        st.subheader(f"Analisis Kinerja Toko: DB KLIK")
         st.markdown("#### Produk Terlaris (Berdasarkan Unit Terjual)")
         top_products = main_store_latest_overall.sort_values('Terjual per Bulan', ascending=False).head(15).copy()
         for col in ['Harga', 'Omzet']:
@@ -258,9 +291,7 @@ if main_menu == "Dashboard Analisis":
             fig_brand_pie = px.pie(brand_omzet_main.sort_values('Omzet', ascending=False).head(10), 
                                  names='Brand', values='Omzet', title='Distribusi Omzet Top 10 Brand')
             st.plotly_chart(fig_brand_pie, use_container_width=True)
-        else:
-            st.info("Tidak ada data omzet brand untuk ditampilkan.")
-            
+    
     with tab3:
         st.subheader("Analisis Brand di Toko Kompetitor")
         st.info("Snapshot omzet brand teratas di setiap toko kompetitor.")
@@ -313,34 +344,30 @@ if main_menu == "Dashboard Analisis":
                             new_products_df['Harga'] = new_products_df['Harga'].apply(format_rupiah)
                             st.dataframe(new_products_df[['Nama Produk', 'Harga', 'Brand']], use_container_width=True, hide_index=True)
 
+
+
 elif main_menu == "Similarity Produk":
     # ================================
     # BAGIAN ALAT SIMILARITY PRODUK
     # ================================
     st.header("⚖️ Alat Analisis Similarity Produk")
-    st.info("Alat ini menggunakan logika TF-IDF dan Validasi Brand untuk menemukan produk serupa di semua toko kompetitor.")
+    st.info("Alat ini menggunakan TF-IDF dan Validasi Brand untuk menemukan produk serupa.")
 
-    # Muat data khusus untuk alat ini
-    @st.cache_data(ttl=600, show_spinner="Memuat data untuk analisis similarity...")
-    def load_data_for_tool():
-        rekap_df, _ = load_all_data(SPREADSHEET_KEY)
-        if rekap_df is None: return None, None, []
-        
-        rekap_df['Nama Normalisasi'] = rekap_df['Nama Produk'].apply(normalize_text)
-        my_store_df = rekap_df[(rekap_df['Toko'] == "DB KLIK") & (rekap_df['Status'] == 'Tersedia')].copy()
-        my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
-        my_store_df.drop_duplicates(subset='SKU', inplace=True)
-        
-        competitor_df = rekap_df[rekap_df['Toko'] != "DB KLIK"].copy()
-        
-        return my_store_df, competitor_df, sorted(my_store_df['Nama Produk'].unique().tolist())
-
-    my_store_df, competitor_df, product_list = load_data_for_tool()
-
-    if my_store_df is None: st.stop()
-
+    # --- PERBAIKAN: Pindahkan kontrol sidebar ke sini ---
+    st.sidebar.header("Filter Similarity")
     accuracy_cutoff = st.sidebar.slider("Tingkat Akurasi Minimum (%)", 50, 100, 65, 1)
+
+    # --- PERBAIKAN: Gunakan data dari st.session_state ---
+    df['Nama Normalisasi'] = df['Nama Produk'].apply(normalize_text)
+    my_store_df = df[(df['Toko'] == "DB KLIK") & (df['Status'] == 'Tersedia')].copy()
+    my_store_df.dropna(subset=['SKU', 'Brand'], inplace=True)
+    my_store_df.drop_duplicates(subset='SKU', inplace=True)
     
+    competitor_df = df[df['Toko'] != "DB KLIK"].copy()
+    product_list = sorted(my_store_df['Nama Produk'].unique().tolist())
+
+    if not product_list: st.warning("Tidak ada produk 'DB KLIK' yang tersedia untuk dianalisis."); st.stop()
+
     selected_name = st.selectbox("Pilih Produk Anda (DB KLIK):", product_list)
 
     if st.button("🔍 Analisis Produk", type="primary"):
@@ -365,7 +392,7 @@ elif main_menu == "Similarity Produk":
                 display_df['Selisih Harga'] = display_df['Selisih'].apply(format_selisih)
                 st.dataframe(display_df[['Nama Produk Tercantum', 'Toko', 'Harga', 'Selisih Harga', 'Status Stok', 'Skor Kemiripan (%)']], use_container_width=True, hide_index=True)
             else:
-                st.warning("Tidak ditemukan produk yang cocok dengan kriteria yang dipilih.")
+                st.warning("Tidak ditemukan produk yang cocok.")
 
 elif main_menu == "Tools (Peralatan)":
     # ================================
@@ -377,3 +404,4 @@ elif main_menu == "Tools (Peralatan)":
 
     if st.button("🚀 Mulai Proses Labeling", type="primary"):
         run_sku_category_labeling(gc, SPREADSHEET_KEY)
+
