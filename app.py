@@ -222,7 +222,7 @@ def format_rupiah(val):
 st.title("📊 Dashboard Analisis Penjualan & Bisnis")
 
 # Mengambil kunci dari secrets, bukan ditulis langsung
-SPREADSHEET_KEY = st.secrets["ID_DATA"]
+SPREADSHEET_KEY = st.secrets["SOURCE_SPREADSHEET_ID"]
 gc = connect_to_gsheets()
 
 # --- Tombol untuk memuat data di awal ---
